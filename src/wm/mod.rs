@@ -1,3 +1,4 @@
+use crate::config::{Action, Internal};
 use crate::Config;
 use crate::xlib;
 
@@ -51,7 +52,6 @@ pub struct WindowManager {
     config: Config,
     monitors: Vec<Monitor>,
     window: u64,
-    ignore: Vec<&'static str>,
 }
 
 impl WindowManager {
@@ -65,29 +65,23 @@ impl WindowManager {
             config: Config::load()?,
             monitors,
             window,
-            ignore: vec![
-                "rmenu",
-            ],
         })
     }
 
     fn setup(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         let keys = [
-            x11::keysym::XK_Return,
-            x11::keysym::XK_q,
-            x11::keysym::XK_d,
-            x11::keysym::XK_m,
             x11::keysym::XK_1,
             x11::keysym::XK_2,
             x11::keysym::XK_3,
             x11::keysym::XK_4,
-            x11::keysym::XK_Left,
-            x11::keysym::XK_Up,
-            x11::keysym::XK_Down,
         ];
 
         for key in keys {
             self.display.grab_key(key, xlib::Mod4Mask, self.display.root);
+        }
+
+        for (key, _) in &self.config.keybindings {
+            self.display.grab_key(*key, xlib::Mod4Mask, self.display.root);
         }
 
         self.display.select_input(self.display.root);
@@ -216,14 +210,6 @@ impl WindowManager {
         Ok(())
     }
 
-    fn is_ignored(&mut self, window: u64) -> Result<bool, Box<dyn std::error::Error>> {
-        if let Some(name) = self.display.fetch_window_name(window)? {
-            Ok(self.ignore.contains(&name.as_str()))
-        } else {
-            Ok(false)
-        }
-    }
-
     fn window_to_client_index(&mut self, window: u64) -> Option<usize> {
         let monitor = self.current_monitor();
 
@@ -258,55 +244,57 @@ impl WindowManager {
             match unsafe { event.type_ } {
                 x11::xlib::KeyPress => {
                     let keycode = unsafe { event.key.keycode };
+                    let keysym = self.display.keycode_to_keysym(keycode) as u32;
 
-                    match self.display.keycode_to_keysym(keycode) as u32 {
-                        x11::keysym::XK_Return => {
-                            self.execv("kitty", &[])?;
-                        },
-                        x11::keysym::XK_d => {
-                            self.execv("rmenu", &[])?;
-                        },
-                        x11::keysym::XK_q => {
-                            println!("killing {}", unsafe { event.key.subwindow });
+                    if let Some(action) = self.config.keybindings.get(&keysym) {
+                        match action {
+                            Action::Exec(path) => {
+                                self.execv(&path, &[])?;
+                            },
+                            Action::Internal(internal) => {
+                                match internal {
+                                    Internal::Kill => {
+                                        self.display.kill_window(unsafe { event.key.subwindow });
+                                    },
+                                    Internal::Restart => {
+                                        self.cleanup_bar();
 
-                            self.display.kill_window(unsafe { event.key.subwindow });
-                        },
-                        x11::keysym::XK_m => {
-                            self.cleanup_bar();
+                                        return Ok(ExitCode::Restart);
+                                    },
+                                    Internal::WindowUp => {
+                                        if let Some(index) = self.window_to_client_index(self.window) {
+                                            if index > 0 {
+                                                self.move_client(index, index - 1);
 
-                            return Ok(ExitCode::Restart);
-                        },
-                        x11::keysym::XK_Up => {
-                            if let Some(index) = self.window_to_client_index(self.window) {
-                                if index > 0 {
-                                    self.move_client(index, index - 1);
+                                                self.tile_clients();
+                                            }
+                                        }
+                                    },
+                                    Internal::WindowDown => {
+                                        if let Some(index) = self.window_to_client_index(self.window) {
+                                            let monitor = self.current_monitor();
 
-                                    self.tile_clients();
+                                            if index < self.monitors[monitor].clients[self.monitors[monitor].workspace].len() - 1 {
+                                                self.move_client(index, index + 1);
+
+                                                self.tile_clients();
+                                            }
+                                        }
+                                    },
+                                    Internal::WindowMaster => {
+                                        if let Some(index) = self.window_to_client_index(self.window) {
+                                            self.move_client(index, 0);
+
+                                            self.tile_clients();
+                                        }
+                                    },
                                 }
-                            }
-                        },
-                        x11::keysym::XK_Down => {
-                            if let Some(index) = self.window_to_client_index(self.window) {
-                                let monitor = self.current_monitor();
+                            },
+                        }
+                    }
 
-                                if index < self.monitors[monitor].clients[self.monitors[monitor].workspace].len() - 1 {
-                                    self.move_client(index, index + 1);
-
-                                    self.tile_clients();
-                                }
-                            }
-                        },
-                        x11::keysym::XK_Left => {
-                            if let Some(index) = self.window_to_client_index(self.window) {
-                                self.move_client(index, 0);
-
-                                self.tile_clients();
-                            }
-                        },
-                        /*
-                         * 49 is keysym for 0
-                        */
-                        keysym => self.goto_workspace(keysym as usize - 49)?,
+                    if (49..49 + 4).contains(&keysym) {
+                        self.goto_workspace(keysym as usize - 49)?;
                     }
                 },
                 x11::xlib::UnmapNotify => {
@@ -334,9 +322,9 @@ impl WindowManager {
                 },
                 x11::xlib::MapRequest => {
                     let window = unsafe { event.map.window };
-                    let ignored = self.is_ignored(window)?;
                     let monitor = self.current_monitor();
                     let workspace = self.monitors[monitor].workspace;
+                    let ignored = self.display.is_dock(window);
 
                     if !self.monitors[monitor].clients[workspace].contains(&Client::new(window, ignored)) && !ignored {
                         self.monitors[monitor].clients[workspace].push(Client::new(window, ignored));

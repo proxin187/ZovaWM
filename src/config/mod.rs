@@ -1,5 +1,8 @@
+use crate::xlib;
+
 use toml::Table;
 
+use std::collections::HashMap;
 use std::env;
 use std::fs;
 
@@ -10,9 +13,23 @@ pub struct Padding {
     pub right: i32,
 }
 
+pub enum Internal {
+    Kill,
+    Restart,
+    WindowUp,
+    WindowDown,
+    WindowMaster,
+}
+
+pub enum Action {
+    Exec(String),
+    Internal(Internal),
+}
+
 pub struct Config {
     pub bar: bool,
     pub padding: Padding,
+    pub keybindings: HashMap<u32, Action>,
 }
 
 impl Config {
@@ -30,8 +47,14 @@ impl Config {
                     left:   Self::get_int(&config, "left-padding",      10) as i32,
                     right:  Self::get_int(&config, "right-padding",     10) as i32,
                 },
+                keybindings: Self::get_keybindings(&config)?,
             })
         } else {
+            let mut keybindings: HashMap<u32, Action> = HashMap::new();
+
+            keybindings.insert(xlib::Display::string_to_keysym("Return") as u32, Action::Exec(String::from("kitty")));
+            keybindings.insert(xlib::Display::string_to_keysym("d") as u32, Action::Exec(String::from("rmenu")));
+
             Ok(Config {
                 bar: true,
                 padding: Padding {
@@ -40,8 +63,38 @@ impl Config {
                     left:   10,
                     right:  10,
                 },
+                keybindings,
             })
         }
+    }
+
+    pub fn get_keybindings(config: &toml::map::Map<String, toml::Value>) -> Result<HashMap<u32, Action>, Box<dyn std::error::Error>> {
+        let mut keybindings: HashMap<u32, Action> = HashMap::new();
+
+        if let Some(keybindings_value) = config.get("keybindings") {
+            for keybinding in keybindings_value.as_array().unwrap_or(&Vec::new()) {
+                if let Some(table) = keybinding.as_table() {
+                    let key = xlib::Display::string_to_keysym(table.get("key").map_or("none", |x| x.as_str().unwrap_or_default())) as u32;
+
+                    if let Some(exec) = table.get("exec") {
+                        keybindings.insert(key, Action::Exec(exec.as_str().unwrap_or_default().to_string()));
+                    } else if let Some(internal) = table.get("internal") {
+                        match internal.as_str().unwrap_or_default() {
+                            "kill" => { keybindings.insert(key, Action::Internal(Internal::Kill)); },
+                            "restart" => { keybindings.insert(key, Action::Internal(Internal::Restart)); },
+                            "window_up" => { keybindings.insert(key, Action::Internal(Internal::WindowUp)); },
+                            "window_down" => { keybindings.insert(key, Action::Internal(Internal::WindowDown)); },
+                            "window_master" => { keybindings.insert(key, Action::Internal(Internal::WindowMaster)); },
+                            internal => println!("[+] unknown internal: {}", internal),
+                        }
+                    } else {
+                        println!("[+] ignoring keybinding: no exec or internal set");
+                    }
+                }
+            }
+        }
+
+        Ok(keybindings)
     }
 
     pub fn get_int(config: &toml::map::Map<String, toml::Value>, key: &str, default: usize) -> usize {

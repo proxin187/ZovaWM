@@ -54,10 +54,10 @@ impl Display {
     }
 
     /*
-     * We want to ignore BadWindow errors as there is no way to check whether a window is valid
-     * making BadWindow errors common especially from UnmapNotify events
+     * We want to ignore BadWindow errors as there is no way to check whether a window is valid,
+     * this makes BadWindow errors common especially from UnmapNotify events
     */
-    unsafe extern "C" fn handle_error(_: *mut xlib::_XDisplay, error: *mut xlib::XErrorEvent) -> i32 {
+    unsafe extern "C" fn handle_error(ptr: *mut xlib::_XDisplay, error: *mut xlib::XErrorEvent) -> i32 {
         unsafe {
             if (*error).error_code == xlib::BadWindow {
                 println!("[+] non-fatal error: req_code: {}, err_code: {}", (*error).request_code, (*error).error_code);
@@ -65,6 +65,11 @@ impl Display {
                 return 0;
             } else {
                 println!("[+] fatal error: req_code: {}, err_code: {}", (*error).request_code, (*error).error_code);
+
+                let mut buffer: [i8; 100] = [0i8; 100];
+                xlib::XGetErrorText(ptr, (*error).error_code as i32, buffer.as_mut_ptr(), 100);
+
+                println!("[+] {}", String::from_utf8(buffer.map(|x| x as u8).to_vec()).unwrap_or_default());
 
                 process::exit(1);
             }
@@ -256,7 +261,7 @@ impl Display {
         draw: *mut xft::XftDraw,
     ) {
         unsafe {
-            xft::XftDrawStringUtf8(draw, color, font, x, y, self.null_terminate(text).as_ptr(), text.len() as i32);
+            xft::XftDrawStringUtf8(draw, color, font, x, y, Self::null_terminate(text).as_ptr(), text.len() as i32);
         }
     }
 
@@ -264,7 +269,7 @@ impl Display {
         unsafe {
             let mut extents: xrender::_XGlyphInfo = mem::zeroed();
 
-            xft::XftTextExtentsUtf8(self.ptr, font, self.null_terminate(text).as_ptr(), text.len() as i32, &mut extents);
+            xft::XftTextExtentsUtf8(self.ptr, font, Self::null_terminate(text).as_ptr(), text.len() as i32, &mut extents);
 
             extents
         }
@@ -278,7 +283,7 @@ impl Display {
                 self.ptr,
                 xlib::XDefaultVisual(self.ptr, self.screen),
                 xlib::XDefaultColormap(self.ptr, self.screen),
-                self.null_terminate(rgb).as_ptr() as *const i8,
+                Self::null_terminate(rgb).as_ptr() as *const i8,
                 &mut color,
             );
 
@@ -292,7 +297,7 @@ impl Display {
 
     pub fn load_font(&mut self, font: &str) -> Result<*mut xft::XftFont, Box<dyn std::error::Error>> {
         unsafe {
-            let font = xft::XftFontOpenName(self.ptr, self.screen, self.null_terminate(font).as_ptr() as *const i8);
+            let font = xft::XftFontOpenName(self.ptr, self.screen, Self::null_terminate(font).as_ptr() as *const i8);
 
             if font.is_null() {
                 Err("XftFontOpenName failed".into())
@@ -310,19 +315,19 @@ impl Display {
         }
     }
 
-    fn null_terminate(&self, string: &str) -> String {
+    fn null_terminate(string: &str) -> String {
         format!("{}\0", string)
     }
 
     pub fn property_exists(&mut self, property: &str) -> bool {
         unsafe {
-            xlib::XInternAtom(self.ptr, self.null_terminate(property).as_ptr() as *const i8, xlib::True) != 0
+            xlib::XInternAtom(self.ptr, Self::null_terminate(property).as_ptr() as *const i8, xlib::True) != 0
         }
     }
 
     pub fn set_property_u64(&mut self, property: &str, value: u64, type_: u64) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
-            let p_atom = xlib::XInternAtom(self.ptr, self.null_terminate(property).as_ptr() as *const i8, xlib::False);
+            let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate(property).as_ptr() as *const i8, xlib::False);
 
             xlib::XDeleteProperty(self.ptr, self.root, p_atom);
             xlib::XChangeProperty(self.ptr, self.root, p_atom, type_, 32, xlib::PropModeReplace, (&value as *const u64) as *const u8, 1);
@@ -331,10 +336,49 @@ impl Display {
         Ok(())
     }
 
+    pub fn is_dock(&mut self, window: u64) -> bool {
+        unsafe {
+            let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate("_NET_WM_WINDOW_TYPE").as_ptr() as *const i8, xlib::False);
+
+            let mut a_atom: xlib::Atom = mem::zeroed();
+            let mut a_format = 0;
+            let mut count = 0;
+            let mut after = 0;
+            let mut data: *mut u8 = ptr::null_mut();
+
+            xlib::XGetWindowProperty(
+                self.ptr,
+                window,
+                p_atom,
+                0,
+                i64::MAX,
+                xlib::False,
+                xlib::XA_ATOM,
+                &mut a_atom,
+                &mut a_format,
+                &mut count,
+                &mut after,
+                &mut data,
+            );
+
+            let dock_atom = xlib::XInternAtom(self.ptr, Self::null_terminate("_NET_WM_WINDOW_TYPE_DOCK").as_ptr() as *const i8, xlib::True);
+
+            for index in 0..count {
+                let atom = *(data.offset(index as isize) as *mut xlib::Atom);
+
+                if atom == dock_atom {
+                    return true;
+                }
+            }
+
+            false
+        }
+    }
+
     pub fn set_wm_name(&mut self, window: u64, name: &str) {
         unsafe {
             let mut text_property: xlib::XTextProperty = mem::zeroed();
-            xlib::XStringListToTextProperty([self.null_terminate(name).as_ptr() as *const i8].as_ptr() as *mut *mut i8, 1, &mut text_property);
+            xlib::XStringListToTextProperty([Self::null_terminate(name).as_ptr() as *const i8].as_ptr() as *mut *mut i8, 1, &mut text_property);
 
             xlib::XSetWMName(self.ptr, window, &mut text_property);
         }
@@ -390,8 +434,8 @@ impl Display {
 
     pub fn kill_window(&mut self, window: u64) {
         unsafe {
-            let wm_delete_window = xlib::XInternAtom(self.ptr, self.null_terminate("WM_DELETE_WINDOW").as_ptr() as *const i8, xlib::False);
-            let wm_protocols = xlib::XInternAtom(self.ptr, self.null_terminate("WM_PROTOCOLS").as_ptr() as *const i8, xlib::False);
+            let wm_delete_window = xlib::XInternAtom(self.ptr, Self::null_terminate("WM_DELETE_WINDOW").as_ptr() as *const i8, xlib::False);
+            let wm_protocols = xlib::XInternAtom(self.ptr, Self::null_terminate("WM_PROTOCOLS").as_ptr() as *const i8, xlib::False);
 
             let mut protocols: *mut xlib::Atom = mem::zeroed();
             let mut supported = false;
@@ -427,6 +471,12 @@ impl Display {
         }
     }
 
+    pub fn string_to_keysym(string: &str) -> u64 {
+        unsafe {
+            xlib::XStringToKeysym(Self::null_terminate(string).as_ptr() as *const i8)
+        }
+    }
+
     pub fn grab_key(&mut self, keysym: u32, mask: u32, window: u64) {
         unsafe {
             xlib::XGrabKey(
@@ -457,9 +507,10 @@ impl Display {
         unsafe {
             let mut event: xlib::XEvent = mem::zeroed();
 
-            let wm_protocols = xlib::XInternAtom(self.ptr, self.null_terminate("WM_PROTOCOLS").as_ptr() as *const i8, xlib::False);
-            let wm_take_focus = xlib::XInternAtom(self.ptr, self.null_terminate("WM_TAKE_FOCUS").as_ptr() as *const i8, xlib::False);
+            let wm_protocols = xlib::XInternAtom(self.ptr, Self::null_terminate("WM_PROTOCOLS").as_ptr() as *const i8, xlib::False);
+            let wm_take_focus = xlib::XInternAtom(self.ptr, Self::null_terminate("WM_TAKE_FOCUS").as_ptr() as *const i8, xlib::False);
 
+            // TODO: use client_message here?
             event.type_ = xlib::ClientMessage;
             event.client_message.window = window;
             event.client_message.message_type = wm_protocols;
