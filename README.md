@@ -74,6 +74,7 @@ keybindings = [
     { key = "d",        exec = "rmenu" },
 
     # Internal
+    { key = "f",        internal = "fullscreen" },
     { key = "q",        internal = "kill" },
     { key = "m",        internal = "restart" },
     { key = "Up",       internal = "window_up" },
@@ -88,5 +89,11 @@ The default bar can be disabled by setting `default-bar` to `false`.
 #### Padding
 The padding between the monitor and the area in which windows are tiled can be modified
 with `{direction}-padding` where `{direction}` can be any of the following `top`, `bottom`, `left`, `right`.
+
+### Keybindings
+In ZovaWM the keybindings point to a action, the action can either be `exec` to execute a program or `internal`
+to perform a internal action such as going fullscreen or killing a window.
+
+The following are the supported internal actions `fullscreen`, `kill`, `restart`, `window_up`, `window_down`, `window_master`.
 
 

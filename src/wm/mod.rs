@@ -2,6 +2,9 @@ use crate::config::{Action, Internal};
 use crate::Config;
 use crate::xlib;
 
+use fork::{fork, Fork};
+
+use std::os::unix::process::CommandExt;
 use std::process::Command;
 use std::process::Stdio;
 use std::ptr;
@@ -43,6 +46,7 @@ pub struct Monitor {
     pub width: u32,
     pub height: u32,
     pub clients: [Vec<Client>; 4],
+    pub fullscreen: Option<Client>,
     pub workspace: usize,
     pub bar: Bar,
 }
@@ -93,12 +97,22 @@ impl WindowManager {
     }
 
     fn execv(&self, program: &str, args: &[&str]) -> Result<(), Box<dyn std::error::Error>> {
-        Command::new(program)
-            .args(args)
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .stdin(Stdio::null())
-            .spawn()?;
+        match fork() {
+            Ok(Fork::Child) => {
+                let error = Command::new(program)
+                    .args(args)
+                    .stdin(Stdio::null())
+                    .stdout(Stdio::null())
+                    .stderr(Stdio::null())
+                    .exec();
+
+                println!("[+] execvp failed: {}", error);
+            },
+            Ok(Fork::Parent(pid)) => {
+                println!("[+] pid: {}", pid);
+            },
+            Err(_) => println!("[+] failed to fork"),
+        }
 
         Ok(())
     }
@@ -139,7 +153,15 @@ impl WindowManager {
 
     fn tile_clients(&mut self) {
         for monitor in &self.monitors {
-            if monitor.clients[monitor.workspace].len() == 1 {
+            if let Some(client) = monitor.fullscreen {
+                self.display.resize_window(
+                    client.window,
+                    monitor.x,
+                    monitor.y,
+                    monitor.width,
+                    monitor.height
+                );
+            } else if monitor.clients[monitor.workspace].len() == 1 {
                 self.display.resize_window(
                     monitor.clients[monitor.workspace][0].window,
                     monitor.x + self.config.padding.right,
@@ -185,6 +207,18 @@ impl WindowManager {
         0
     }
 
+    fn window_to_client_index(&mut self, window: u64) -> Option<usize> {
+        let monitor = self.current_monitor();
+
+        for (index, client) in self.monitors[monitor].clients[self.monitors[monitor].workspace].iter().enumerate() {
+            if client.window == window {
+                return Some(index);
+            }
+        }
+
+        None
+    }
+
     fn goto_workspace(&mut self, workspace: usize) -> Result<(), Box<dyn std::error::Error>> {
         let monitor = self.current_monitor();
 
@@ -210,16 +244,25 @@ impl WindowManager {
         Ok(())
     }
 
-    fn window_to_client_index(&mut self, window: u64) -> Option<usize> {
+    fn toggle_fullscreen(&mut self, window: u64) -> Result<(), Box<dyn std::error::Error>> {
         let monitor = self.current_monitor();
+        let state_fullscreen = self.display.intern_atom("_NET_WM_STATE_FULLSCREEN");
 
-        for (index, client) in self.monitors[0].clients[self.monitors[monitor].workspace].iter().enumerate() {
-            if client.window == window {
-                return Some(index);
+        if self.monitors[monitor].fullscreen.is_none() {
+            if let Some(client) = self.window_to_client_index(window) {
+                self.display.set_property_u64("_NET_WM_STATE", state_fullscreen, xlib::XA_ATOM)?;
+
+                self.monitors[monitor].fullscreen = Some(self.monitors[monitor].clients[self.monitors[monitor].workspace][client]);
             }
+        } else {
+            self.display.set_property_null("_NET_WM_STATE", xlib::XA_ATOM)?;
+
+            self.monitors[monitor].fullscreen = None;
         }
 
-        None
+        self.tile_clients();
+
+        Ok(())
     }
 
     fn move_client(&mut self, old_index: usize, new_index: usize) {
@@ -253,6 +296,9 @@ impl WindowManager {
                             },
                             Action::Internal(internal) => {
                                 match internal {
+                                    Internal::Fullscreen => {
+                                        self.toggle_fullscreen(self.window);
+                                    },
                                     Internal::Kill => {
                                         self.display.kill_window(unsafe { event.key.subwindow });
                                     },
@@ -318,6 +364,12 @@ impl WindowManager {
                         .map(|c| *c)
                         .collect::<Vec<Client>>();
 
+                    if let Some(client) = self.monitors[monitor].fullscreen {
+                        if client.window == window {
+                            self.monitors[monitor].fullscreen = None;
+                        }
+                    }
+
                     self.tile_clients();
                 },
                 x11::xlib::MapRequest => {
@@ -347,6 +399,19 @@ impl WindowManager {
                     self.display.set_property_u64("_NET_ACTIVE_WINDOW", window, xlib::XA_WINDOW)?;
 
                     self.window = window;
+                },
+                x11::xlib::ClientMessage => {
+                    let message_type = unsafe { event.client_message.message_type };
+                    let message_data = unsafe { event.client_message.data };
+                    let message_window = unsafe { event.client_message.window };
+
+                    let state_fullscreen = self.display.intern_atom("_NET_WM_STATE_FULLSCREEN") as i64;
+
+                    if message_type == self.display.intern_atom("_NET_WM_STATE") {
+                        if message_data.get_long(1) == state_fullscreen || message_data.get_long(2) == state_fullscreen {
+                            self.toggle_fullscreen(message_window);
+                        }
+                    }
                 },
                 _ => {},
             }

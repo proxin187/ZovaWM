@@ -14,6 +14,7 @@ pub struct Padding {
 }
 
 pub enum Internal {
+    Fullscreen,
     Kill,
     Restart,
     WindowUp,
@@ -80,6 +81,7 @@ impl Config {
                         keybindings.insert(key, Action::Exec(exec.as_str().unwrap_or_default().to_string()));
                     } else if let Some(internal) = table.get("internal") {
                         match internal.as_str().unwrap_or_default() {
+                            "fullscreen" => { keybindings.insert(key, Action::Internal(Internal::Fullscreen)); },
                             "kill" => { keybindings.insert(key, Action::Internal(Internal::Kill)); },
                             "restart" => { keybindings.insert(key, Action::Internal(Internal::Restart)); },
                             "window_up" => { keybindings.insert(key, Action::Internal(Internal::WindowUp)); },

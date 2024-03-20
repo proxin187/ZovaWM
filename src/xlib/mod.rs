@@ -1,7 +1,7 @@
 use crate::wm::Monitor;
 use crate::wm::Bar;
 
-pub use x11::xlib::{XA_WINDOW, XA_CARDINAL};
+pub use x11::xlib::{XA_WINDOW, XA_CARDINAL, XA_ATOM};
 pub use x11::xlib::Mod4Mask;
 use x11::xinerama;
 use x11::xrender;
@@ -106,6 +106,7 @@ impl Display {
                         width: xmonitor.width as u32,
                         height: xmonitor.height as u32,
                         clients: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                        fullscreen: None,
                         workspace: 0,
                         bar: self.create_bar(xmonitor.x_org as i32, xmonitor.width as u32)?,
                     });
@@ -119,6 +120,7 @@ impl Display {
                     width,
                     height: self.display_height(),
                     clients: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                    fullscreen: None,
                     workspace: 0,
                     bar: self.create_bar(0, width)?,
                 });
@@ -325,6 +327,17 @@ impl Display {
         }
     }
 
+    pub fn set_property_null(&mut self, property: &str, type_: u64) -> Result<(), Box<dyn std::error::Error>> {
+        unsafe {
+            let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate(property).as_ptr() as *const i8, xlib::False);
+
+            xlib::XDeleteProperty(self.ptr, self.root, p_atom);
+            xlib::XChangeProperty(self.ptr, self.root, p_atom, type_, 32, xlib::PropModeReplace, (&0 as *const i32) as *const u8, 1);
+        }
+
+        Ok(())
+    }
+
     pub fn set_property_u64(&mut self, property: &str, value: u64, type_: u64) -> Result<(), Box<dyn std::error::Error>> {
         unsafe {
             let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate(property).as_ptr() as *const i8, xlib::False);
@@ -334,6 +347,18 @@ impl Display {
         }
 
         Ok(())
+    }
+
+    pub fn atom_name(&mut self, atom: u64) -> &str {
+        unsafe {
+            CStr::from_ptr(xlib::XGetAtomName(self.ptr, atom)).to_str().unwrap_or("no atom")
+        }
+    }
+
+    pub fn intern_atom(&mut self, atom: &str) -> u64 {
+        unsafe {
+            xlib::XInternAtom(self.ptr, Self::null_terminate(atom).as_ptr() as *const i8, xlib::False)
+        }
     }
 
     pub fn is_dock(&mut self, window: u64) -> bool {
