@@ -8,6 +8,7 @@ links = "X11"
 
 [dependencies]
 fork = "0.1.23"
+nix = { version = "0.28.0", features = ["process", "signal"] }
 toml = "0.8.11"
 x11 = "2.21.0"
 
