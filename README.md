@@ -1,8 +1,7 @@
-# ZovaWM
 
 <p align="center">
-  <img src="assets/logo.png" />
-  <p>ZovaWM is a window manager for x11 written in rust.</p>
+  <img src="assets/logo.png" width="200"/>
+  <p align="center">ZovaWM is a window manager for x11 written in rust.</p>
 </p>
 
 
