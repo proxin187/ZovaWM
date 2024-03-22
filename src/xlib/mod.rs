@@ -2,7 +2,7 @@ use crate::wm::Monitor;
 use crate::wm::Bar;
 
 pub use x11::xlib::{XA_WINDOW, XA_CARDINAL, XA_ATOM};
-pub use x11::xlib::Mod4Mask;
+pub use x11::xlib::{Mod4Mask, Button1, Button3};
 use x11::xinerama;
 use x11::xrender;
 use x11::xlib;
@@ -12,6 +12,11 @@ use std::ffi::CStr;
 use std::process;
 use std::mem;
 use std::ptr;
+
+struct WindowProperty {
+    data: *mut u8,
+    length: u64,
+}
 
 #[derive(Debug)]
 pub struct Pointer {
@@ -361,37 +366,46 @@ impl Display {
         }
     }
 
-    pub fn is_dock(&mut self, window: u64) -> bool {
+    fn get_window_property(&mut self, window: u64, atom: u64) -> WindowProperty {
         unsafe {
-            let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate("_NET_WM_WINDOW_TYPE").as_ptr() as *const i8, xlib::False);
-
             let mut a_atom: xlib::Atom = mem::zeroed();
             let mut a_format = 0;
-            let mut count = 0;
+            let mut length = 0;
             let mut after = 0;
             let mut data: *mut u8 = ptr::null_mut();
 
             xlib::XGetWindowProperty(
                 self.ptr,
                 window,
-                p_atom,
+                atom,
                 0,
                 i64::MAX,
                 xlib::False,
                 xlib::XA_ATOM,
                 &mut a_atom,
                 &mut a_format,
-                &mut count,
+                &mut length,
                 &mut after,
                 &mut data,
             );
 
-            let dock_atom = xlib::XInternAtom(self.ptr, Self::null_terminate("_NET_WM_WINDOW_TYPE_DOCK").as_ptr() as *const i8, xlib::True);
+            WindowProperty {
+                data,
+                length,
+            }
+        }
+    }
 
-            for index in 0..count {
-                let atom = *(data.offset(index as isize) as *mut xlib::Atom);
+    pub fn atom_cmp(&mut self, window: u64, property: &str, value: &str) -> bool {
+        unsafe {
+            let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate(property).as_ptr() as *const i8, xlib::False);
+            let v_atom = xlib::XInternAtom(self.ptr, Self::null_terminate(value).as_ptr() as *const i8, xlib::True);
+            let window_property = self.get_window_property(window, p_atom);
 
-                if atom == dock_atom {
+            for index in 0..window_property.length {
+                let atom = *(window_property.data.offset(index as isize) as *mut xlib::Atom);
+
+                if atom == v_atom {
                     return true;
                 }
             }
@@ -436,6 +450,16 @@ impl Display {
             } else {
                 Ok(None)
             }
+        }
+    }
+
+    pub fn get_window_attributes(&mut self, window: u64) -> xlib::XWindowAttributes {
+        unsafe {
+            let mut attr: xlib::XWindowAttributes = mem::zeroed();
+
+            xlib::XGetWindowAttributes(self.ptr, window, &mut attr);
+
+            attr
         }
     }
 
@@ -513,6 +537,45 @@ impl Display {
                 xlib::GrabModeAsync,
                 xlib::GrabModeAsync,
             );
+        }
+    }
+
+    pub fn grab_button(&mut self, button: u32, window: u64) {
+        unsafe {
+            xlib::XGrabButton(
+                self.ptr,
+                button,
+                xlib::Mod4Mask,
+                window,
+                xlib::True,
+                (xlib::ButtonPressMask | xlib::ButtonReleaseMask | xlib::PointerMotionMask) as u32,
+                xlib::GrabModeAsync,
+                xlib::GrabModeAsync,
+                0,
+                0
+            );
+        }
+    }
+
+    pub fn grab_pointer(&mut self, window: u64) {
+        unsafe {
+            xlib::XGrabPointer(
+                self.ptr,
+                window,
+                xlib::True,
+                (xlib::PointerMotionMask | xlib::ButtonReleaseMask) as u32,
+                xlib::GrabModeAsync,
+                xlib::GrabModeAsync,
+                0,
+                0,
+                xlib::CurrentTime
+            );
+        }
+    }
+
+    pub fn ungrab_pointer(&mut self) {
+        unsafe {
+            xlib::XUngrabPointer(self.ptr, xlib::CurrentTime);
         }
     }
 

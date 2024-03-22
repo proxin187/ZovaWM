@@ -23,6 +23,7 @@ pub enum Internal {
     WindowUp,
     WindowDown,
     WindowMaster,
+    ToggleFloat,
 }
 
 pub enum Action {
@@ -93,6 +94,7 @@ impl Config {
                             "window_up" => { keybindings.insert(key, Action::Internal(Internal::WindowUp)); },
                             "window_down" => { keybindings.insert(key, Action::Internal(Internal::WindowDown)); },
                             "window_master" => { keybindings.insert(key, Action::Internal(Internal::WindowMaster)); },
+                            "toggle_float" => { keybindings.insert(key, Action::Internal(Internal::ToggleFloat)); },
                             internal => println!("[+] unknown internal: {}", internal),
                         }
                     } else {
