@@ -598,8 +598,7 @@ impl Display {
             let wm_protocols = xlib::XInternAtom(self.ptr, Self::null_terminate("WM_PROTOCOLS").as_ptr() as *const i8, xlib::False);
             let wm_take_focus = xlib::XInternAtom(self.ptr, Self::null_terminate("WM_TAKE_FOCUS").as_ptr() as *const i8, xlib::False);
 
-            // TODO: use client_message here?
-            event.type_ = xlib::ClientMessage;
+            event.client_message.type_ = xlib::ClientMessage;
             event.client_message.window = window;
             event.client_message.message_type = wm_protocols;
             event.client_message.format = 32;

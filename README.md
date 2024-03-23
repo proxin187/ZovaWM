@@ -1,6 +1,11 @@
 
 <p align="center">
   <img src="assets/logo.png" width="200"/>
+  <br>
+  <img src="https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white" />
+  <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" />
+  <img src="https://img.shields.io/github/stars/proxin187/ZovaWM" />
+  <br>
   <p align="center">ZovaWM is a window manager for x11 written in rust.</p>
 </p>
 
@@ -10,6 +15,9 @@
 The main purpose of ZovaWM is a full-featured minimal window manager,
 this makes it a great lightweight option while still having features such as
 multi monitor and EWMH support.
+
+## Features
+
 
 ## Screenshots
 
@@ -131,6 +139,6 @@ in the future there will be implemented support for configuring this.
 ZovaWM is licensed under the MIT license.
 
 ## Credits
-![Suckless DWM](https://dwm.suckless.org/): Great learning resource.
+[Suckless DWM](https://dwm.suckless.org/): Great learning resource.
 
 

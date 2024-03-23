@@ -123,15 +123,13 @@ impl WindowManager {
         match unsafe { unistd::fork() } {
             Ok(unistd::ForkResult::Parent { child, .. }) => {
                 println!("[+] child pid: {}", child);
+
+                unsafe {
+                    signal::signal(signal::SIGCHLD, signal::SigHandler::SigIgn)?;
+                }
             },
             Ok(unistd::ForkResult::Child) => {
                 unistd::setsid()?;
-
-                let sa = signal::SigAction::new(signal::SigHandler::SigDfl, signal::SaFlags::empty(), signal::SigSet::empty());
-
-                unsafe {
-                    signal::sigaction(signal::Signal::SIGCHLD, &sa)?;
-                }
 
                 let args = args.iter()
                     .map(|x| CString::new(*x).unwrap())
@@ -189,6 +187,10 @@ impl WindowManager {
 
     fn tile_clients(&mut self) {
         for monitor in &self.monitors {
+            let clients = monitor.clients[monitor.workspace].iter()
+                .filter(|x| x.tiled)
+                .collect::<Vec<&Client>>();
+
             if let Some(client) = monitor.fullscreen {
                 self.display.resize_window(
                     client.window,
@@ -197,34 +199,34 @@ impl WindowManager {
                     monitor.width,
                     monitor.height
                 );
-            } else if monitor.clients[monitor.workspace].len() == 1 {
+            } else if clients.len() == 1 {
                 self.display.resize_window(
-                    monitor.clients[monitor.workspace][0].window,
+                    clients[0].window,
                     monitor.x + self.config.padding.right,
                     self.config.padding.top,
                     monitor.width - self.config.padding.right as u32 - self.config.padding.left as u32,
                     monitor.height - self.config.padding.bottom as u32 - self.config.padding.top as u32
                 );
-            } else if !monitor.clients[monitor.workspace].is_empty() {
+            } else if !clients.is_empty() {
                 self.display.resize_window(
-                    monitor.clients[monitor.workspace][0].window,
+                    clients[0].window,
                     monitor.x + self.config.padding.right,
                     self.config.padding.top,
                     (monitor.width / 2) - self.config.padding.right as u32 - 5,
                     monitor.height - self.config.padding.bottom as u32 - self.config.padding.top as u32
                 );
 
-                for (index, client) in monitor.clients[monitor.workspace][1..].iter().enumerate() {
+                for (index, client) in clients[1..].iter().enumerate() {
                     self.display.resize_window(
                         client.window,
                         monitor.x + (monitor.width as i32 / 2) + 5,
                         (
                             (monitor.height as i32 - self.config.padding.top - self.config.padding.bottom + 10)
-                                / (monitor.clients[monitor.workspace].len() as i32 - 1)
+                                / (clients.len() as i32 - 1)
                         ) * index as i32 + self.config.padding.top,
                         (monitor.width as u32 / 2) - self.config.padding.left as u32 - 5,
                         (monitor.height as u32 - self.config.padding.top as u32 - self.config.padding.bottom as u32 + 10)
-                            / (monitor.clients[monitor.workspace].len() as u32 - 1) - 10,
+                            / (clients.len() as u32 - 1) - 10,
                     );
                 }
             }
@@ -259,7 +261,7 @@ impl WindowManager {
         for monitor in &self.monitors {
             for workspace in 0..monitor.clients.len() - 1 {
                 for client in &monitor.clients[workspace] {
-                    if client.window == window {
+                    if client.window == window && client.tiled {
                         return true;
                     }
                 }
@@ -276,8 +278,12 @@ impl WindowManager {
             self.monitors[monitor].workspace = workspace;
             self.display.set_property_u64("_NET_CURRENT_DESKTOP", self.monitors[monitor].workspace as u64, xlib::XA_CARDINAL)?;
 
-            for client in &self.monitors[monitor].clients[self.monitors[monitor].workspace] {
+            for client in self.monitors[monitor].clients[self.monitors[monitor].workspace].clone() {
                 self.display.map_window(client.window);
+
+                if !client.tiled {
+                    self.display.raise_window(client.window);
+                }
             }
 
             for (workspace, clients) in self.monitors[monitor].clients.iter().enumerate() {
@@ -324,7 +330,7 @@ impl WindowManager {
     }
 
     fn change_focus(&mut self, window: u64) -> Result<(), Box<dyn std::error::Error>> {
-        self.display.raise_window(window);
+        // self.display.raise_window(window);
         self.display.set_input_focus(window);
         self.display.set_focus_icccm(window);
         self.display.set_property_u64("_NET_ACTIVE_WINDOW", window, xlib::XA_WINDOW)?;
@@ -428,25 +434,32 @@ impl WindowManager {
                                     },
                                     Internal::ToggleFloat => {
                                         let window = unsafe { event.key.subwindow };
+                                        let monitor = self.current_monitor();
+                                        let workspace = self.monitors[monitor].workspace;
 
                                         if self.is_tiled(window) {
-                                            let monitor = self.current_monitor();
-                                            let workspace = self.monitors[monitor].workspace;
-
-                                            self.monitors[monitor].clients[workspace] = self.monitors[monitor].clients[self.monitors[monitor].workspace].iter()
-                                                .filter(|c| c.window != window)
-                                                .map(|c| *c)
+                                            self.monitors[monitor].clients[workspace] = self.monitors[monitor].clients[workspace].iter()
+                                                .map(|c| {
+                                                    if c.window == window {
+                                                        Client::new(c.window, false)
+                                                    } else {
+                                                        Client::new(c.window, c.tiled)
+                                                    }
+                                                })
                                                 .collect::<Vec<Client>>();
-
-                                            self.tile_clients();
                                         } else {
-                                            let monitor = self.current_monitor();
-                                            let workspace = self.monitors[monitor].workspace;
-
-                                            self.monitors[monitor].clients[workspace].push(Client::new(window, true));
-
-                                            self.tile_clients();
+                                            self.monitors[monitor].clients[workspace] = self.monitors[monitor].clients[workspace].iter()
+                                                .map(|c| {
+                                                    if c.window == window {
+                                                        Client::new(c.window, true)
+                                                    } else {
+                                                        Client::new(c.window, c.tiled)
+                                                    }
+                                                })
+                                                .collect::<Vec<Client>>();
                                         }
+
+                                        self.tile_clients();
                                     },
                                 }
                             },
@@ -495,7 +508,11 @@ impl WindowManager {
                         || self.display.atom_cmp(window, "_NET_WM_STATE", "_NET_WM_STATE_MODAL");
 
                     if !self.monitors[monitor].clients[workspace].contains(&Client::new(window, ignored)) && !ignored {
-                        self.monitors[monitor].clients[workspace].push(Client::new(window, ignored));
+                        self.monitors[monitor].clients[workspace].push(Client::new(window, true));
+                    } else if self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DIALOG")
+                        || self.display.atom_cmp(window, "_NET_WM_STATE", "_NET_WM_STATE_MODAL") {
+
+                        self.monitors[monitor].clients[workspace].push(Client::new(window, false));
                     }
 
                     self.display.map_window(window);
