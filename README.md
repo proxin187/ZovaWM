@@ -4,7 +4,7 @@
   <br>
   <img src="https://img.shields.io/badge/rust-%23000000.svg?style=for-the-badge&logo=rust&logoColor=white" />
   <img src="https://img.shields.io/badge/Linux-FCC624?style=for-the-badge&logo=linux&logoColor=black" />
-  <img src="https://img.shields.io/github/stars/proxin187/ZovaWM" />
+  <img src="https://img.shields.io/github/stars/proxin187/ZovaWM?style=for-the-badge" />
   <br>
   <p align="center">ZovaWM is a window manager for x11 written in rust.</p>
 </p>
