@@ -93,7 +93,7 @@ impl Display {
         }
     }
 
-    pub fn get_monitors(&mut self) -> Result<Vec<Monitor>, Box<dyn std::error::Error>> {
+    pub fn get_monitors(&mut self, bar: bool, old_monitors: &Vec<Monitor>) -> Result<Vec<Monitor>, Box<dyn std::error::Error>> {
         let mut monitors: Vec<Monitor> = Vec::new();
 
         unsafe {
@@ -110,10 +110,10 @@ impl Display {
                         y: xmonitor.y_org as i32,
                         width: xmonitor.width as u32,
                         height: xmonitor.height as u32,
-                        clients: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                        clients: if let Some(monitor) = old_monitors.get(index as usize) { monitor.clients.clone() } else { [Vec::new(), Vec::new(), Vec::new(), Vec::new()] },
                         fullscreen: None,
                         workspace: 0,
-                        bar: self.create_bar(xmonitor.x_org as i32, xmonitor.width as u32)?,
+                        bar: if bar { Some(self.create_bar(xmonitor.x_org as i32, xmonitor.width as u32)?) } else { None },
                     });
                 }
             } else {
@@ -124,10 +124,10 @@ impl Display {
                     y: 0,
                     width,
                     height: self.display_height(),
-                    clients: [Vec::new(), Vec::new(), Vec::new(), Vec::new()],
+                    clients: if let Some(monitor) = old_monitors.get(0) { monitor.clients.clone() } else { [Vec::new(), Vec::new(), Vec::new(), Vec::new()] },
                     fullscreen: None,
                     workspace: 0,
-                    bar: self.create_bar(0, width)?,
+                    bar: if bar { Some(self.create_bar(0, width)?) } else { None },
                 });
             }
         }
@@ -396,6 +396,9 @@ impl Display {
         }
     }
 
+    /*
+     * properties without the "ATOM[]/32" type causes misaligned pointers
+     */
     pub fn atom_cmp(&mut self, window: u64, property: &str, value: &str) -> bool {
         unsafe {
             let p_atom = xlib::XInternAtom(self.ptr, Self::null_terminate(property).as_ptr() as *const i8, xlib::False);
@@ -511,6 +514,60 @@ impl Display {
             } else {
                 xlib::XKillClient(self.ptr, window);
             }
+        }
+    }
+
+    pub fn set_desktop_viewport(&mut self, window: u64) {
+        unsafe {
+            let viewport = [0, 0];
+
+            xlib::XChangeProperty(
+                self.ptr,
+                window,
+                self.intern_atom("_NET_DESKTOP_VIEWPORT"),
+                xlib::XA_CARDINAL,
+                32,
+                xlib::PropModeReplace,
+                viewport.as_ptr() as *const u8,
+                2,
+            );
+        }
+    }
+
+    pub fn set_net_supported(&mut self, window: u64) {
+        unsafe {
+            let supported = [
+                self.intern_atom("WM_PROTOCOLS"),
+                self.intern_atom("WM_TAKE_FOCUS"),
+
+                self.intern_atom("WM_DELETE_WINDOW"),
+                self.intern_atom("_NET_ACTIVE_WINDOW"),
+
+                self.intern_atom("_NET_NUMBER_OF_DESKTOPS"),
+                self.intern_atom("_NET_CURRENT_DESKTOP"),
+                self.intern_atom("_NET_DESKTOP_VIEWPORT"),
+
+                self.intern_atom("_NET_WM_STATE"),
+                self.intern_atom("_NET_WM_STATE_MODAL"),
+                self.intern_atom("_NET_WM_STATE_FULLSCREEN"),
+
+                self.intern_atom("_NET_WM_WINDOW_TYPE"),
+                self.intern_atom("_NET_WM_WINDOW_TYPE_DOCK"),
+                self.intern_atom("_NET_WM_WINDOW_TYPE_DIALOG"),
+                self.intern_atom("_NET_WM_WINDOW_TYPE_SPLASH"),
+                self.intern_atom("_NET_WM_WINDOW_TYPE_UTILITY"),
+            ];
+
+            xlib::XChangeProperty(
+                self.ptr,
+                window,
+                self.intern_atom("_NET_SUPPORTED"),
+                xlib::XA_ATOM,
+                32,
+                xlib::PropModeReplace,
+                supported.as_ptr() as *const u8,
+                supported.len() as i32,
+            );
         }
     }
 

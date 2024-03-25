@@ -16,6 +16,7 @@ pub struct Padding {
 pub enum Internal {
     Fullscreen,
     Kill,
+    Exit,
     Restart,
     FocusUp,
     FocusDown,
@@ -87,6 +88,7 @@ impl Config {
                         match internal.as_str().unwrap_or_default() {
                             "fullscreen" => { keybindings.insert(key, Action::Internal(Internal::Fullscreen)); },
                             "kill" => { keybindings.insert(key, Action::Internal(Internal::Kill)); },
+                            "exit" => { keybindings.insert(key, Action::Internal(Internal::Exit)); },
                             "restart" => { keybindings.insert(key, Action::Internal(Internal::Restart)); },
                             "focus_up" => { keybindings.insert(key, Action::Internal(Internal::FocusUp)); },
                             "focus_down" => { keybindings.insert(key, Action::Internal(Internal::FocusDown)); },

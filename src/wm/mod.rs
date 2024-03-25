@@ -10,9 +10,6 @@ use std::process::Command;
 use std::ptr;
 use std::env;
 
-pub enum ExitCode {
-    Restart,
-}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Client {
@@ -48,7 +45,7 @@ pub struct Monitor {
     pub clients: [Vec<Client>; 4],
     pub fullscreen: Option<Client>,
     pub workspace: usize,
-    pub bar: Bar,
+    pub bar: Option<Bar>,
 }
 
 pub struct FloatClient {
@@ -67,12 +64,16 @@ pub struct WindowManager {
 impl WindowManager {
     pub fn new() -> Result<WindowManager, Box<dyn std::error::Error>> {
         let mut display = xlib::Display::open(ptr::null())?;
+        let config = Config::load()?;
         let window = display.root;
-        let monitors = display.get_monitors()?;
+        let monitors = display.get_monitors(config.bar, &Vec::new())?;
+
+        display.set_net_supported(display.root);
+        display.set_desktop_viewport(display.root);
 
         Ok(WindowManager {
             display,
-            config: Config::load()?,
+            config,
             monitors,
             float_client: FloatClient {
                 start: None,
@@ -153,33 +154,37 @@ impl WindowManager {
 
     fn cleanup_bar(&mut self) {
         for monitor in &mut self.monitors {
-            self.display.xft_free(&mut monitor.bar);
+            if let Some(bar) = &mut monitor.bar {
+                self.display.xft_free(bar);
+            }
         }
     }
 
     fn draw_bar(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         for monitor in &self.monitors {
-            self.display.map_window(monitor.bar.window);
-            self.display.clear_window(monitor.bar.window);
+            if let Some(bar) = &monitor.bar {
+                self.display.map_window(bar.window);
+                self.display.clear_window(bar.window);
 
-            for workspace in 0..monitor.clients.len() {
-                if workspace == monitor.workspace {
-                    self.display.draw_rec((workspace as i32 * 25) + 5, 5, 20, 20, 0x5ec587, monitor.bar.window, monitor.bar.gc);
+                for workspace in 0..monitor.clients.len() {
+                    if workspace == monitor.workspace {
+                        self.display.draw_rec((workspace as i32 * 25) + 5, 5, 20, 20, 0x5ec587, bar.window, bar.gc);
 
-                    self.display.xft_draw_string(&format!("{}", workspace + 1), (workspace as i32 * 25) + 11, 20, monitor.bar.font, &monitor.bar.bg, monitor.bar.draw);
-                } else {
-                    self.display.xft_draw_string(&format!("{}", workspace + 1), (workspace as i32 * 25) + 11, 20, monitor.bar.font, &monitor.bar.fg, monitor.bar.draw);
+                        self.display.xft_draw_string(&format!("{}", workspace + 1), (workspace as i32 * 25) + 11, 20, bar.font, &bar.bg, bar.draw);
+                    } else {
+                        self.display.xft_draw_string(&format!("{}", workspace + 1), (workspace as i32 * 25) + 11, 20, bar.font, &bar.fg, bar.draw);
+                    }
                 }
-            }
 
-            self.display.xft_draw_string(
-                "ZovaWM",
-                (self.monitors[0].width as i32 / 2) - (self.display.xft_measure_string("ZovaWM", monitor.bar.font).width as i32 / 2),
-                20,
-                monitor.bar.font,
-                &monitor.bar.fg,
-                monitor.bar.draw
-            );
+                self.display.xft_draw_string(
+                    "ZovaWM",
+                    (self.monitors[0].width as i32 / 2) - (self.display.xft_measure_string("ZovaWM", bar.font).width as i32 / 2),
+                    20,
+                    bar.font,
+                    &bar.fg,
+                    bar.draw
+                );
+            }
         }
 
         Ok(())
@@ -257,18 +262,11 @@ impl WindowManager {
         None
     }
 
-    fn is_tiled(&mut self, window: u64) -> bool {
-        for monitor in &self.monitors {
-            for workspace in 0..monitor.clients.len() - 1 {
-                for client in &monitor.clients[workspace] {
-                    if client.window == window && client.tiled {
-                        return true;
-                    }
-                }
-            }
-        }
-
-        false
+    fn is_tiled(&mut self, window: u64, monitor: usize, workspace: usize) -> bool {
+        !self.monitors[monitor].clients[workspace].iter()
+            .filter(|c| c.tiled && c.window == window)
+            .collect::<Vec<&Client>>()
+            .is_empty()
     }
 
     fn goto_workspace(&mut self, workspace: usize) -> Result<(), Box<dyn std::error::Error>> {
@@ -350,7 +348,7 @@ impl WindowManager {
         Ok(())
     }
 
-    pub fn run(&mut self) -> Result<ExitCode, Box<dyn std::error::Error>> {
+    pub fn run(&mut self) -> Result<(), Box<dyn std::error::Error>> {
         self.setup()?;
 
         let home = env::var("HOME")?;
@@ -381,10 +379,26 @@ impl WindowManager {
                                     Internal::Kill => {
                                         self.display.kill_window(unsafe { event.key.subwindow });
                                     },
+                                    Internal::Exit => {
+                                        self.cleanup_bar();
+
+                                        return Ok(());
+                                    },
                                     Internal::Restart => {
                                         self.cleanup_bar();
 
-                                        return Ok(ExitCode::Restart);
+                                        self.config = Config::load()?;
+                                        self.monitors = self.display.get_monitors(self.config.bar, &self.monitors)?;
+
+                                        self.setup()?;
+
+                                        /*
+                                         * this may cause zombie processes to pile up when restarting
+                                        */
+                                        let home = env::var("HOME")?;
+                                        Command::new("sh")
+                                            .args(&[&format!("{}/.config/zovawm/startup.sh", home)])
+                                            .spawn()?;
                                     },
                                     Internal::FocusUp => {
                                         if let Some(index) = self.window_to_client_index(self.window) {
@@ -437,7 +451,7 @@ impl WindowManager {
                                         let monitor = self.current_monitor();
                                         let workspace = self.monitors[monitor].workspace;
 
-                                        if self.is_tiled(window) {
+                                        if self.is_tiled(window, monitor, workspace) {
                                             self.monitors[monitor].clients[workspace] = self.monitors[monitor].clients[workspace].iter()
                                                 .map(|c| {
                                                     if c.window == window {
@@ -505,13 +519,12 @@ impl WindowManager {
                     let workspace = self.monitors[monitor].workspace;
                     let ignored = self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK")
                         || self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DIALOG")
-                        || self.display.atom_cmp(window, "_NET_WM_STATE", "_NET_WM_STATE_MODAL");
+                        || self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_UTILITY")
+                        || self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_SPLASH");
 
                     if !self.monitors[monitor].clients[workspace].contains(&Client::new(window, ignored)) && !ignored {
                         self.monitors[monitor].clients[workspace].push(Client::new(window, true));
-                    } else if self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DIALOG")
-                        || self.display.atom_cmp(window, "_NET_WM_STATE", "_NET_WM_STATE_MODAL") {
-
+                    } else if !self.display.atom_cmp(window, "_NET_WM_WINDOW_TYPE", "_NET_WM_WINDOW_TYPE_DOCK") {
                         self.monitors[monitor].clients[workspace].push(Client::new(window, false));
                     }
 
@@ -542,8 +555,12 @@ impl WindowManager {
                     }
                 },
                 x11::xlib::ButtonPress => {
-                    if !self.is_tiled(unsafe { event.button.subwindow }) {
-                        self.display.grab_pointer(unsafe { event.button.subwindow });
+                    let window = unsafe { event.key.subwindow };
+                    let monitor = self.current_monitor();
+                    let workspace = self.monitors[monitor].workspace;
+
+                    if !self.is_tiled(window, monitor, workspace) {
+                        self.display.grab_pointer(window);
 
                         self.float_client.start = Some(unsafe { event.button });
                         self.float_client.attr = Some(self.display.get_window_attributes(unsafe { event.button.subwindow }));
